@@ -188,11 +188,11 @@ enum {
 };
 
 enum {
-  PawnValueMg   = 126,   PawnValueEg   = 208,
-  KnightValueMg = 781,   KnightValueEg = 854,
-  BishopValueMg = 825,   BishopValueEg = 915,
-  RookValueMg   = 1276,  RookValueEg   = 1380,
-  QueenValueMg  = 2538,  QueenValueEg  = 2682,
+  PawnValueMg   = 126*78/100,   PawnValueEg   = 208*78/100,
+  KnightValueMg = 781*78/100,   KnightValueEg = 854*78/100,
+  BishopValueMg = 825*78/100,   BishopValueEg = 915*78/100,
+  RookValueMg   = 1276*78/100,  RookValueEg   = 1380*78/100,
+  QueenValueMg  = 2538*78/100,  QueenValueEg  = 2682*78/100,
 
   MidgameLimit  = 15258, EndgameLimit = 3915
 };

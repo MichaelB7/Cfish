@@ -250,8 +250,8 @@ void mainthread_search(void)
 
   base_ct = option_value(OPT_CONTEMPT) * PawnValueEg / 100;
   //Limits.depth  = option_value(OPT_DEPTH);
-  int sleepseconds = option_value(OPT_SLEEP);
-  sleep (sleepseconds);
+   int sleepseconds = option_value(OPT_SLEEP);
+   sleep (sleepseconds);
 
 
 
@@ -501,9 +501,9 @@ void thread_search(Position *pos)
       }
 
       // Reset aspiration window starting size
-      if (pos->rootDepth >= 4) {
+      if (pos->rootDepth >= 5) {
         Value previousScore = rm->move[pvIdx].previousScore;
-        delta = 17;
+        delta = 18;
         alpha = max(previousScore - delta, -VALUE_INFINITE);
         beta  = min(previousScore + delta,  VALUE_INFINITE);
 
@@ -917,13 +917,14 @@ INLINE Value search_node(Position *pos, Stack *ss, Value alpha, Value beta,
 
   // Step 7. Futility pruning: child node
   if (   !PvNode
-      &&  depth < 9
+      &&  depth < 7
       &&  eval - futility_margin(depth, improving) >= beta
       &&  eval < VALUE_KNOWN_WIN)  // Do not return unproven wins
     return eval; // - futility_margin(depth); (do not do the right thing)
 
   // Step 8. Null move search with verification search (is omitted in PV nodes)
   if (   !PvNode
+      && depth > 5
       && (ss-1)->currentMove != MOVE_NULL
       && (ss-1)->statScore < 22977
       && eval >= beta
@@ -936,7 +937,8 @@ INLINE Value search_node(Position *pos, Stack *ss, Value alpha, Value beta,
     assert(eval - beta >= 0);
 
     // Null move dynamic reduction based on depth and value
-    Depth R = (1015 + 85 * depth) / 256 + min((eval - beta) / 191, 3);
+    Depth R = depth < 4 ? 3 :
+          (1015 + 85 * depth) / 256 + min((eval - beta) / 256, 3);
 
     ss->currentMove = MOVE_NULL;
     ss->history = &(*pos->counterMoveHistory)[0][0][0][0];
@@ -1033,7 +1035,8 @@ INLINE Value search_node(Position *pos, Stack *ss, Value alpha, Value beta,
   }
 
   // Step 10. If the position is not in TT, decrease depth by 2
-  if (PvNode && depth >= 6 && !ttMove)
+
+  if (PvNode && depth >= 7 && !ttMove)
     depth -= 2;
 
 moves_loop: // When in check search starts from here.

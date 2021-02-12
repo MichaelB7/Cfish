@@ -40,7 +40,7 @@
 
 #ifdef NNUE_EMBEDDED
 #include "incbin.h"
-INCBIN(Network, EvalFileDefaultName);
+INCBIN(Network, DefaultEvalFile);
 #endif
 
 // Old gcc on Windows is unable to provide a 32-byte aligned stack.
@@ -602,7 +602,7 @@ static bool load_eval_file(const char *evalFile)
   size_t size;
 
 #ifdef NNUE_EMBEDDED
-  if (strcmp(evalFile, EvalFileDefaultName) == 0) {
+  if (strcmp(evalFile, DefaultEvalFile) == 0) {
     evalData = gNetworkData;
     mapping = 0;
     size = gNetworkSize;
