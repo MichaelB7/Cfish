@@ -85,7 +85,7 @@ endif
 
 nnue = yes
 pure = no
-sparse = yes
+sparse = no
 optimize = yes
 lto = no
 debug = no
@@ -342,7 +342,7 @@ ifeq ($(ARCH),armv7)
 	arch = armv7
 	prefetch = yes
 	bits = 32
-	lto = yes
+	lto = no
 endif
 
 ifeq ($(ARCH),armv7-neon)
@@ -351,7 +351,7 @@ ifeq ($(ARCH),armv7-neon)
 	popcnt = yes
 	neon = yes
 	bits = 32
-	lto = yes
+	lto = no
 endif
 
 ifeq ($(ARCH),armv8)
@@ -359,7 +359,7 @@ ifeq ($(ARCH),armv8)
 	prefetch = yes
 	popcnt = yes
 	neon = yes
-	lto = yes
+	lto = no
 endif
 
 ifeq ($(ARCH),apple-silicon)
@@ -367,7 +367,7 @@ ifeq ($(ARCH),apple-silicon)
 	prefetch = yes
 	popcnt = yes
 	neon = yes
-	lto = yes
+	lto = no
 endif
 
 ifeq ($(ARCH),ppc-32)
@@ -379,6 +379,16 @@ ifeq ($(ARCH),ppc-64)
 	arch = ppc64
 	popcnt = yes
 	prefetch = yes
+endif
+
+ifneq ($(findstring e2k,$(ARCH)),)
+	arch = e2k
+	bits = 64
+	sse = yes
+	sse2 = yes
+	ssse3 = yes
+	sse41 = yes
+	popcnt = yes
 endif
 
 endif
@@ -472,7 +482,9 @@ ifeq ($(COMP),clang)
 
 	ifneq ($(KERNEL),Darwin)
 	ifneq ($(KERNEL),OpenBSD)
+	ifneq ($(KERNEL),FreeBSD)
 		LDFLAGS += -latomic
+	endif
 	endif
 	endif
 
@@ -587,6 +599,10 @@ ifeq ($(optimize),yes)
 		ifeq ($(KERNEL),Darwin)
 			CFLAGS += -mdynamic-no-pic
 		endif
+	endif
+
+	ifeq ($(comp),clang)
+		CFLAGS += -fexperimental-new-pass-manager
 	endif
 endif
 
@@ -760,8 +776,8 @@ ifeq ($(debug),no)
 # gcc: gcc version 10.1 in msys2 or TDM-GCC version 9.2 are known to work,
 # older might not.
 	else ifeq ($(comp),mingw)
-		CFLAGS += -flto
-		LDFLAGS += $(CFLAGS) -flto=jobserver
+		#CFLAGS += -flto
+		#LDFLAGS += $(CFLAGS) -flto=jobserver
 	endif
 endif
 endif
@@ -822,6 +838,7 @@ help:
 	@echo "armv7-neon              > ARMv7 32-bit with popcnt and neon"
 	@echo "armv7                   > ARMv7 32-bit"
 	@echo "apple-silicon           > Apple silicon ARM64"
+	@echo "e2k                     > Elbrus 2000"
 	@echo "general-64              > unspecified 64-bit"
 	@echo "general-32              > unspecified 32-bit"
 	@echo ""
@@ -950,7 +967,8 @@ config-sanity: net
 	@test "$(optimize)" = "yes" || test "$(optimize)" = "no"
 	@test "$(arch)" = "any" || test "$(arch)" = "x86_64" || test "$(arch)" = "i386" || \
 	 test "$(arch)" = "ppc64" || test "$(arch)" = "ppc" || \
-	 test "$(arch)" = "armv7" || test "$(arch)" = "armv8" || test "$(arch)" = "arm64"
+	 test "$(arch)" = "armv7" || test "$(arch)" = "armv8" || test "$(arch)" = "arm64" || \
+	 test "$(arch)" = "e2k"
 	@test "$(bits)" = "32" || test "$(bits)" = "64"
 	@test "$(prefetch)" = "yes" || test "$(prefetch)" = "no"
 	@test "$(popcnt)" = "yes" || test "$(popcnt)" = "no"

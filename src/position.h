@@ -91,6 +91,7 @@ struct Stack {
   Value staticEval;
   Value statScore;
   int moveCount;
+  int doubleExtensions;
   bool ttPv;
   bool ttHit;
   uint8_t ply;
@@ -168,8 +169,7 @@ struct Position {
   Color nmpColor;
   Depth rootDepth;
   Depth completedDepth;
-  Score contempt;
-  int failedHighCnt;
+  Score trend;
 
   // Pointers to thread-specific tables.
   CounterMoveStat *counterMoves;
@@ -265,7 +265,8 @@ PURE bool has_game_cycle(const Position *pos, int ply);
 #define captured_piece() (pos->st->capturedPiece)
 
 // Accessing hash keys
-#define key() (pos->st->key)
+#define raw_key() (pos->st->key)
+#define key() (pos->st->rule50 < 14 ? pos->st->key : pos->st->key ^ make_key((pos->st->rule50 - 14) / 8))
 #define material_key() (pos->st->materialKey)
 #define pawn_key() (pos->st->pawnKey)
 
@@ -285,20 +286,9 @@ INLINE Bitboard blockers_for_king(const Position *pos, Color c)
   return pos->st->blockersForKing[c];
 }
 
-INLINE bool is_discovery_check_on_king(const Position *pos, Color c, Move m)
-{
-  return pos->st->blockersForKing[c] & sq_bb(from_sq(m));
-}
-
 INLINE bool pawn_passed(const Position *pos, Color c, Square s)
 {
   return !(pieces_cp(!c, PAWN) & passed_pawn_span(c, s));
-}
-
-INLINE bool advanced_pawn_push(const Position *pos, Move m)
-{
-  return   type_of_p(moved_piece(m)) == PAWN
-        && relative_rank_s(stm(), from_sq(m)) > RANK_4;
 }
 
 INLINE bool opposite_bishops(const Position *pos)

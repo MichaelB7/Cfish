@@ -27,6 +27,7 @@
 #include "nnue.h"
 #endif
 #include "pawns.h"
+#include "timeman.h"
 
 #ifndef NNUE_PURE
 
@@ -79,11 +80,9 @@ static const Bitboard KingFlank[8] = {
 
 // Thresholds for lazy and space evaluation
 enum {
-  LazyThreshold1 =  1565,
-  LazyThreshold2 =  1102,
-  SpaceThreshold = 11551,
-  NNUEThreshold1 =   682,
-  NNUEThreshold2 =   176
+  LazyThreshold1 =  3130,
+  LazyThreshold2 =  2204,
+  SpaceThreshold = 11551
 };
 
 // KingAttackWeights[PieceType] contains king attack weights by piece type
@@ -123,7 +122,7 @@ static const Score MobilityBonus[4][32] = {
 // BishopsPawns[distance from edge] contains a file-dependent penalty for
 // pawns on squares of the same color as our bishop.
 static const Score BishopPawns[8] = {
-  S(3, 8), S(3, 9), S(1, 8), S(3, 7), S(3, 7), S(1, 8), S(3, 9), S(3, 8)
+  S(3, 8), S(3, 9), S(2, 8), S(3, 8), S(3, 8), S(2, 8), S(3, 9), S(3, 8)
 };
 
 static const Score RookOnClosedFile = S(10, 5);
@@ -155,17 +154,16 @@ static const Score PassedFile[8] = {
 };
 
 // Assorted bonuses and penalties used by evaluation
-static const Score BadOutpost          = S( -7, 36);
 static const Score BishopKingProtector = S(  6,  9);
 static const Score BishopOnKingRing    = S( 24,  0);
-static const Score BishopOutpost       = S( 31, 23);
+static const Score BishopOutpost       = S( 31, 24);
 static const Score BishopXRayPawns     = S(  4,  5);
 static const Score CorneredBishop      = S( 50, 50);
 static const Score FlankAttacks        = S(  8,  0);
 static const Score Hanging             = S( 69, 36);
 static const Score KnightKingProtector = S(  8,  9);
 static const Score KnightOnQueen       = S( 16, 11);
-static const Score KnightOutpost       = S( 56, 34);
+static const Score KnightOutpost       = S( 57, 38);
 static const Score LongDiagonalBishop  = S( 45,  0);
 static const Score MinorBehindPawn     = S( 18,  3);
 static const Score PawnlessFlank       = S( 17, 95);
@@ -177,8 +175,11 @@ static const Score ThreatByKing        = S( 24, 89);
 static const Score ThreatByPawnPush    = S( 48, 39);
 static const Score ThreatBySafePawn    = S(173, 94);
 static const Score TrappedRook         = S( 55, 13);
+static const Score UncontestedOutpost  = S(  1, 10);
 static const Score WeakQueen           = S( 56, 15);
 static const Score WeakQueenProtection = S( 14,  0);
+
+static const Value CorneredBishopV     = 50;
 
 #undef S
 #undef V
@@ -271,8 +272,7 @@ INLINE Score evaluate_pieces(const Position *pos, EvalInfo *ei, Score *mobility,
 
     if (Pt == BISHOP || Pt == KNIGHT) {
       // Bonus if the piece is on an outpost square or can reach one.
-      // Reduced bonus for knights (BadOutpost) if it has few relevant targets.
-      bb = OutpostRanks & ei->attackedBy[Us][PAWN] & ~ei->pe->pawnAttacksSpan[Them];
+      // Bonus for knights (UncontestedOutpost) if few relevant targets.
       bb = OutpostRanks & (ei->attackedBy[Us][PAWN] | shift_bb(Down, pieces_p(PAWN)))
                         & ~ei->pe->pawnAttacksSpan[Them];
       Bitboard targets = pieces_c(Them) & ~pieces_p(PAWN);
@@ -280,7 +280,7 @@ INLINE Score evaluate_pieces(const Position *pos, EvalInfo *ei, Score *mobility,
           && (bb & sq_bb(s) & ~CenterFiles) // on a side outpost
           && !(b & targets)                 // no relevant attacks
           && (!more_than_one(targets & (sq_bb(s) & QueenSide ? QueenSide : KingSide))))
-        score += BadOutpost;
+        score += UncontestedOutpost * popcount(pieces_p(PAWN) & (sq_bb(s) & QueenSide ? QueenSide : KingSide));
       else if (bb & sq_bb(s))
         score += Pt == KNIGHT ? KnightOutpost : BishopOutpost;
 
@@ -322,9 +322,8 @@ INLINE Score evaluate_pieces(const Position *pos, EvalInfo *ei, Score *mobility,
         {
           Square d = pawn_push(Us) + (file_of(s) == FILE_A ? EAST : WEST);
           if (piece_on(s + d) == make_piece(Us, PAWN))
-            score -=  piece_on(s + d + pawn_push(Us))             ? CorneredBishop * 4
-                    : piece_on(s + d + d) == make_piece(Us, PAWN) ? CorneredBishop * 2
-                                                                  : CorneredBishop;
+            score -= !is_empty(s + d + pawn_push(Us)) ? CorneredBishop * 4
+                                                      : CorneredBishop * 3;
         }
       }
     }
@@ -756,7 +755,6 @@ INLINE Value evaluate_winnable(const Position *pos, EvalInfo *ei, Score score)
   return v;
 }
 
-
 // evaluate_classical() is the classical evaluation function. It returns
 // a static evaluation of the position from the point of view of the side
 // to move.
@@ -781,14 +779,14 @@ static Value evaluate_classical(const Position *pos)
   // in the position struct (material + piece square tables) and the
   // material imbalance. Score is computed internally from the white point
   // of view.
-  Score score = psq_score() + material_imbalance(ei.me) + pos->contempt;
+  Score score = psq_score() + material_imbalance(ei.me) + pos->trend;
 
   // Probe the pawn hash table
   ei.pe = pawn_probe(pos);
   score += ei.pe->score;
 
   // Early exit if score is high
-#define lazy_skip(v) (abs(mg_value(score) + eg_value(score)) / 2 > v + non_pawn_material() / 64)
+#define lazy_skip(v) (abs(mg_value(score) + eg_value(score)) > v + non_pawn_material() / 32)
   if (lazy_skip(LazyThreshold1))
     goto make_v;
 
@@ -836,13 +834,42 @@ make_v:
   v = (v / 16) * 16;
 
   // Side to move point of view
-  v = (stm() == WHITE ? v : -v) + Tempo;
+  v = (stm() == WHITE ? v : -v);
 
   return v;
 }
 
 #ifdef NNUE
 int useNNUE;
+
+// fix_FRC() corrects for cornered bishops to fix FRC with NNUE.
+static Value fix_FRC(const Position *pos)
+{
+  if (!(pieces_p(BISHOP) & 0x8100000000000081ULL))
+    return 0;
+
+  Value v = 0;
+
+  if (piece_on(SQ_A1) == W_BISHOP && piece_on(SQ_B2) == W_PAWN)
+    v += !is_empty(SQ_B3) ? -CorneredBishopV * 4
+                          : -CorneredBishopV * 3;
+  if (piece_on(SQ_H1) == W_BISHOP && piece_on(SQ_G2) == W_PAWN)
+    v += !is_empty(SQ_G3) ? -CorneredBishopV * 4
+                          : -CorneredBishopV * 3;
+  if (piece_on(SQ_A8) == B_BISHOP && piece_on(SQ_B7) == B_PAWN)
+    v += !is_empty(SQ_B6) ? CorneredBishopV * 4
+                          : CorneredBishopV * 3;
+  if (piece_on(SQ_H8) == B_BISHOP && piece_on(SQ_G7) == B_PAWN)
+    v += !is_empty(SQ_G6) ? CorneredBishopV * 4
+                          : CorneredBishopV * 3;
+
+  return stm() == WHITE ? v : -v;
+}
+
+#define adjusted_NNUE() \
+  (nnue_evaluate(pos, true) * (903 + mat) / 1024 \
+   + (is_chess960() ? fix_FRC(pos) : 0))
+
 #endif
 
 Value evaluate(const Position *pos)
@@ -851,27 +878,16 @@ Value evaluate(const Position *pos)
 
 #ifdef NNUE
 
-  const int mat = non_pawn_material() + PawnValueMg * popcount(pieces_p(PAWN));
+  const int mat = 32 * non_pawn_material() / 1024 + 32 * popcount(pieces_p(PAWN));
   if (useNNUE == EVAL_HYBRID) {
     Value psq = abs(eg_value(psq_score()));
-    int r50 = 16 + rule50_count();
-    bool largePsq = psq * 16 > (NNUEThreshold1 + non_pawn_material() / 64) * r50;
-    bool classical = largePsq || (psq > PawnValueMg / 4 && !(pos->nodes & 0x0B));
+    int r50 = rule50_count();
+    bool classical = psq * 5 > (750 + non_pawn_material() / 64) * (5 + r50);
 
-    bool strongClassical = non_pawn_material() < 2 * RookValueMg && popcount(pieces_p(PAWN)) < 2;
-    v =  classical || strongClassical
-       ? evaluate_classical(pos)
-       : nnue_evaluate(pos) * (679 + mat / 32) / 1024 + Tempo;
-
-    if (   classical && largePsq && !strongClassical
-        && (   abs(v) * 16 < NNUEThreshold2 * r50
-            || (   opposite_bishops(pos)
-                && abs(v) * 16 < (NNUEThreshold1 + non_pawn_material() / 64) * r50
-                && !(pos->nodes & 0xB))))
-      v = nnue_evaluate(pos) * (679 + mat / 32) / 1024 + Tempo;
-
+    v = classical ? evaluate_classical(pos)
+                  : adjusted_NNUE();
   } else if (useNNUE == EVAL_PURE)
-    v = nnue_evaluate(pos) * (679 + mat / 32) / 1024 + Tempo;
+    v = adjusted_NNUE();
   else
     v = evaluate_classical(pos);
 
@@ -892,9 +908,9 @@ Value evaluate(const Position *pos)
 Value evaluate(const Position *pos)
 {
   Value v;
-  int mat = non_pawn_material() + PieceValue[MG][PAWN] * popcount(pieces_p(PAWN));
+  int mat = non_pawn_material() + 4 * PawnValueMg * popcount(pieces_p(PAWN));
 
-  v = nnue_evaluate(pos) * (679 + mat / 32) / 1024 + Tempo;
+  v = adjusted_NNUE();
   v = v * (100 - rule50_count()) / 100;
   return clamp(v, VALUE_TB_LOSS_IN_MAX_PLY + 1, VALUE_TB_WIN_IN_MAX_PLY - 1);
 }

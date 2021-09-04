@@ -269,6 +269,8 @@ void pos_set(Position *pos, char *fen, int isChess960)
   {
     st->epSquare = make_square(col - 'a', row - '1');
 
+    // We assume a legal FEN, i.e. if epSquare is present, then the previous
+    // move was a legal double pawn push.
     if (!(attackers_to(st->epSquare) & pieces_cp(stm(), PAWN)))
       st->epSquare = 0;
   }
@@ -345,7 +347,8 @@ static void set_state(Position *pos, Stack *st)
 #endif
   }
 
-  if (st->epSquare != 0)
+// emulate a bug in Stockfish
+//  if (st->epSquare != 0)
     st->key ^= zob.enpassant[file_of(st->epSquare)];
 
   if (stm() == BLACK)
@@ -434,10 +437,11 @@ void pos_fen(const Position *pos, char *str)
 Bitboard slider_blockers(const Position *pos, Bitboard sliders, Square s,
     Bitboard *pinners)
 {
-  Bitboard result = 0, snipers;
+  Bitboard blockers = 0, snipers;
   *pinners = 0;
 
-  // Snipers are sliders that attack square 's'when a piece removed.
+  // Snipers are sliders that attack square 's' when a piece and other
+  // snipers are removed.
   snipers = (  (PseudoAttacks[ROOK  ][s] & pieces_pp(QUEEN, ROOK))
              | (PseudoAttacks[BISHOP][s] & pieces_pp(QUEEN, BISHOP))) & sliders;
   Bitboard occupancy = pieces() ^ snipers;
@@ -446,13 +450,13 @@ Bitboard slider_blockers(const Position *pos, Bitboard sliders, Square s,
     Square sniperSq = pop_lsb(&snipers);
     Bitboard b = between_bb(s, sniperSq) & occupancy;
 
-    if (!more_than_one(b)) {
-      result |= b;
+    if (b && !more_than_one(b)) {
+      blockers |= b;
       if (b & pieces_c(color_of(piece_on(s))))
         *pinners |= sq_bb(sniperSq);
     }
   }
-  return result;
+  return blockers;
 }
 #endif
 
@@ -515,16 +519,14 @@ bool is_legal(const Position *pos, Move m)
 
     // For Chess960, verify that moving the castling rook does not discover
     // some hidden checker, e.g. on SQ_A1 when castling rook is on SQ_B1.
-    return   !is_chess960()
-          || !(attacks_bb_rook(to, pieces() ^ sq_bb(to_sq(m)))
-               & pieces_cpp(!us, ROOK, QUEEN));
+    return !is_chess960() || !(blockers_for_king(pos, us) & sq_bb(to_sq(m)));
   }
 
   // If the moving piece is a king, check whether the destination
   // square is attacked by the opponent. Castling moves are checked
   // for legality during move generation.
   if (pieces_p(KING) & sq_bb(from))
-    return !(attackers_to(to) & pieces_c(!us));
+    return !(attackers_to_occ(pos, to, pieces() ^ sq_bb(from)) & pieces_c(!us));
 
   // A non-king move is legal if and only if it is not pinned or it
   // is moving along the ray towards or away from the king.
@@ -622,7 +624,7 @@ bool is_pseudo_legal(const Position *pos, Move m)
     ExtMove list[MAX_MOVES];
     ExtMove *end = generate_quiets(pos, list);
     for (ExtMove *p = list; p < end; p++)
-      if (p->move == m) return is_legal(pos, m);
+      if (p->move == m) return true;
     return false;
   }
 
@@ -689,8 +691,7 @@ bool is_pseudo_legal(const Position *pos, Move m)
     // Again we need to be a bit careful.
     if (more_than_one(checkers()))
       return false;
-    if (!((between_bb(lsb(checkers()), square_of(us, KING))
-                                      | checkers()) & sq_bb(to)))
+    if (!(between_bb(square_of(us, KING), lsb(checkers())) & sq_bb(to)))
       return false;
   }
   return true;
@@ -763,7 +764,7 @@ void do_move(Position *pos, Move m, int givesCheck)
 {
   assert(move_is_ok(m));
 
-  Key key = key() ^ zob.side;
+  Key key = pos->st->key ^ zob.side;
 
   // Copy some fields of the old state to our new Stack object except the
   // ones which are going to be recalculated from scratch anyway and then
@@ -1113,7 +1114,7 @@ Key key_after(const Position *pos, Move m)
   Square to = to_sq(m);
   Piece pc = piece_on(from);
   Piece captured = piece_on(to);
-  Key k = key() ^ zob.side;
+  Key k = pos->st->key ^ zob.side;
 
   if (captured)
     k ^= zob.psq[captured][to];
@@ -1237,10 +1238,10 @@ bool has_game_cycle(const Position *pos, int ply)
         || (j = H2(moveKey), cuckoo[j] == moveKey))
     {
       Move m = cuckooMove[j];
-      if (!(((Bitboard *)BetweenBB)[m] & pieces())) {
+      if (!((((Bitboard *)BetweenBB)[m] ^ sq_bb(to_sq(m))) & pieces())) {
         if (   ply > i
             || color_of(piece_on(is_empty(from_sq(m)) ? to_sq(m) : from_sq(m))) == stm())
-        return true;
+          return true;
       }
     }
   }

@@ -12,13 +12,15 @@
 // OutputLayer = AffineTransform<HiddenLayer2, 1>
 // 32 x clipped_t -> 1 x int32_t
 
-static alignas(64) weight_t hidden1_weights[32 * 512];
-static alignas(64) weight_t hidden2_weights[32 * 32];
-static alignas(64) weight_t output_weights [1 * 32];
+static alignas(64) weight_t hidden1_weights[8][16 * 1024];
+static alignas(64) weight_t hidden2_weights[8][32 * 32];
+static alignas(64) weight_t output_weights[8][1 * 32];
 
-static alignas(64) int32_t hidden1_biases[32];
-static alignas(64) int32_t hidden2_biases[32];
-static int32_t output_biases[1];
+static alignas(64) int32_t hidden1_biases[8][16];
+static alignas(64) int32_t hidden2_biases[8][32];
+static int32_t output_biases[8][1];
+
+#endif
 
 INLINE void affine_propagate(clipped_t *input, int32_t *output,
     unsigned inDims, unsigned outDims, int32_t *biases, weight_t *weights)
@@ -532,8 +534,9 @@ INLINE void clip_propagate(int32_t *input, clipped_t *output, unsigned numDims)
 #endif
 }
 
+#ifdef NNUE_REGULAR
 struct NetData {
-  alignas(64) clipped_t input[512];
+  alignas(64) clipped_t input[1024];
   int32_t hidden1_values[32];
   int32_t hidden2_values[32];
   clipped_t hidden1_clipped[32];
@@ -541,7 +544,7 @@ struct NetData {
 };
 
 // Evaluation function
-Value nnue_evaluate(const Position *pos)
+Value nnue_evaluate(const Position *pos, bool adjusted)
 {
   int32_t out_value;
 #ifdef ALIGNMENT_HACK // work around a bug in old gcc on Windows
@@ -553,26 +556,42 @@ Value nnue_evaluate(const Position *pos)
 #define B(x) (buf.x)
 #endif
 
-  transform(pos, B(input), NULL);
+  int32_t bucket = (popcount(pieces()) - 1) / 4;
+  int32_t psqt_val;
 
-  affine_propagate(B(input), B(hidden1_values), 512, 32,
-      hidden1_biases, hidden1_weights);
+  transform(pos, B(input), NULL, bucket, &psqt_val);
+
+  affine_propagate(B(input), B(hidden1_values), 1024, 16,
+      hidden1_biases[bucket], hidden1_weights[bucket]);
   clip_propagate(B(hidden1_values), B(hidden1_clipped), 32);
+  memset(B(hidden1_clipped) + 16, 0, sizeof(clipped_t) * 16);
 
   affine_propagate(B(hidden1_clipped), B(hidden2_values), 32, 32,
-      hidden2_biases, hidden2_weights);
+      hidden2_biases[bucket], hidden2_weights[bucket]);
   clip_propagate(B(hidden2_values), B(hidden2_clipped), 32);
 
-  out_value = output_layer(B(hidden2_clipped), output_biases, output_weights);
+  out_value = output_layer(B(hidden2_clipped), output_biases[bucket], output_weights[bucket]);
 
 #if defined(USE_MMX)
   _mm_empty();
 #endif
 
-  return out_value / FV_SCALE;
-}
+  int materialist = psqt_val;
+  int positional = out_value;
 
-static void read_output_weights(weight_t *w, const char *d)
+  int delta_npm = abs(non_pawn_material_c(WHITE) - non_pawn_material_c(BLACK));
+  int entertainment = (adjusted && delta_npm <= BishopValueMg - KnightValueMg ? 7 : 0);
+
+  int A = 128 - entertainment;
+  int B = 128 + entertainment;
+
+  int sum = (A * materialist + B * positional) / 128;
+
+  return sum / FV_SCALE;
+}
+#endif
+
+static const char* read_output_weights_dense(weight_t *w, const char *d)
 {
   for (unsigned i = 0; i < 32; i++) {
     unsigned c = i;
@@ -583,9 +602,10 @@ static void read_output_weights(weight_t *w, const char *d)
 #endif
     w[c] = *d++;
   }
+  return d;
 }
 
-INLINE unsigned wt_idx(unsigned r, unsigned c, unsigned dims)
+INLINE unsigned wt_idx_dense(unsigned r, unsigned c, unsigned dims)
 {
   (void)dims;
 
@@ -611,5 +631,3 @@ INLINE unsigned wt_idx(unsigned r, unsigned c, unsigned dims)
 
   return k;
 }
-
-#endif
